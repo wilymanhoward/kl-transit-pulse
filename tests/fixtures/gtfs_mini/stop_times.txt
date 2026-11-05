@@ -1,0 +1,7 @@
+trip_id,arrival_time,departure_time,stop_id,stop_sequence,stop_headsign
+weekday_R1_R101_0,06:00:00,06:00:00,S1,1,
+weekday_R1_R101_0,06:10:30,06:11:00,S2,2,
+weekend_R1_R101_0,06:00:00,06:00:00,S1,1,
+weekend_R1_R101_0,06:12:00,06:12:00,S2,2,
+weekday_R2_R202_0,23:50:00,23:50:00,S2,1,
+weekday_R2_R202_0,24:10:00,24:10:00,S3,2,Gamma

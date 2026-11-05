@@ -17,9 +17,10 @@ BASE = os.getenv("GTFS_API_BASE", "https://api.data.gov.my")
 CATEGORY = os.getenv("GTFS_CATEGORY", "rapid-bus-kl")
 OUT_DIR = Path(__file__).resolve().parent.parent / "data" / "samples"
 
+# Trailing slashes matter: without them the API answers 301, costing an extra request.
 TARGETS = {
-    "vehicle_positions.pb": f"{BASE}/gtfs-realtime/vehicle-position/prasarana",
-    "gtfs_static.zip": f"{BASE}/gtfs-static/prasarana",
+    "vehicle_positions.pb": f"{BASE}/gtfs-realtime/vehicle-position/prasarana/",
+    "gtfs_static.zip": f"{BASE}/gtfs-static/prasarana/",
 }
 
 

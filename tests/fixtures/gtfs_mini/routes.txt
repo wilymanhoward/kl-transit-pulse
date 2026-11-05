@@ -1,0 +1,3 @@
+route_id,agency_id,route_short_name,route_long_name,route_type,route_color,route_text_color
+R1,rapidkl,100,Alpha ~ Beta,3,006CFF,FFFFFF
+R2,rapidkl,200,Beta ~ Gamma,3,,

@@ -1,0 +1,4 @@
+trip_id,start_time,end_time,headway_secs,exact_times
+weekday_R1_R101_0,06:00:00,19:30:00,1800,0
+weekend_R1_R101_0,06:00:00,22:00:00,3600,0
+weekday_R2_R202_0,23:50:00,25:00:00,900,0
