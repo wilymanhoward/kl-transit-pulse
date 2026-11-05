@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.env
+# Live samples are large and re-downloadable; small test fixtures live in tests/fixtures/
+data/samples/*
+!data/samples/.gitkeep
