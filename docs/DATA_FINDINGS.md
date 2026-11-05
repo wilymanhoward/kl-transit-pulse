@@ -58,6 +58,7 @@ The live `trip.start_time` (e.g. `18:05:15`) looks like the actual start of that
 `route_id` always matches, so route-level stats still work for those vehicles. Trip-level logic must handle a missing trip without crashing.
 
 ### 4. Smaller things
+- The API redirects `/prasarana?...` to `/prasarana/?...` (301), and the static ZIP then 302-redirects to S3. Without the trailing slash, each poll costs 2 requests against the 4/min limit. No rate-limit headers are returned.
 - No `direction_id` in realtime. Get it from the static trip, or from the `01`/`02` suffix in the trip ID (unverified guess).
 - No holiday calendar: on public holidays the "expected" service is wrong.
 - Vehicle positions are 30 to 100 s old when we fetch them. Each one has its own `timestamp`, so we store that, not the fetch time.
