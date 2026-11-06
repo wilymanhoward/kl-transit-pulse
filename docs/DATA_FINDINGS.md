@@ -107,20 +107,22 @@ Most buses (67 to 90% per poll) send a new fix every 30 s poll; the rest are slo
 | Gaps between windows (e.g. 07:00–07:30) | common | No scheduled headway, so those gaps aren't judged |
 | Ingestion failures | 5 DNS errors + one 59-min gap (the PC lost network / slept) | Headways that span an outage would look like huge waits, so they're excluded |
 
-### The realtime feed only covers about a third of scheduled buses (changes the plan)
+### The realtime feed only covers about a quarter to a third of scheduled buses (changes the plan)
 
 Weekday 13:00–14:00 KL, 2026-11-06:
 
 | | Timetable | Seen in realtime feed |
 |---|---|---|
 | Routes with service | 109 | 46 |
-| Departures (runs starting that hour) | 285 | 96 (34%) |
+| Departures (runs starting that hour) | 362 | 96 (27%) |
 | Routes with zero buses in the feed | – | 73 of 109 (including the BRT Sunway Line B1000, every 3 min) |
 | Routes with >= 80% of their departures seen | – | 11 |
 
+*Correction:* a first version of this table said 285 departures (34%). That query only counted frequency windows covering the *whole* hour. Counting every generated departure (`generate_series` in SQL, and `departures_per_hour` in code, which agree) gives 362.
+
 Cross-check: about 90 vehicles report at any moment, while the timetable needs roughly 240 on the road at midday.
 
-**Consequence:** a headway is the gap between buses *we can see*. If two thirds of a route's buses have no GPS in the feed, an every-5-min route looks like every-15-min. From this data alone, "bus didn't run" and "bus ran without GPS" are impossible to tell apart. Headway statistics are only trustworthy where coverage is near 100%.
+**Consequence:** a headway is the gap between buses *we can see*. If most of a route's buses have no GPS in the feed, an every-5-min route looks like every-15-min. From this data alone, "bus didn't run" and "bus ran without GPS" are impossible to tell apart. Headway statistics are only trustworthy where coverage is near 100%.
 
 **What does work: delay per bus, against its own departure.** The live `start_time` is the run's actual departure. For 175 of 355 runs (49%), the first GPS fix arrives within 3 min of it. Adding the timetable's travel time to each stop (from `stop_times`) gives a scheduled arrival per stop, so `delay = observed arrival − (departure + scheduled travel time)`. Missing buses don't distort it. On the 2.6 h sample:
 

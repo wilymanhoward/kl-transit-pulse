@@ -59,3 +59,24 @@
 
 3. *Why did you store the bus's own timestamp instead of the time you fetched it?*
    The feed is 30 to 100 s old when we receive it, and buses report at different moments. Reliability maths needs to know when the bus was actually there. The vehicle timestamp is also part of the de-duplication key: same bus + same GPS time = same fix.
+
+## Phase 3: reliability estimation
+
+**What it is, in plain English.** For every bus run, I follow its GPS dots along its route's stop list and estimate when it passed each stop, interpolating between dots because they're ~300 m apart. Its delay at each stop is compared with when the timetable says it should get there *given when it actually left*. I also measure gaps between buses, but only for routes where the feed shows almost every scheduled bus, because the feed only carries about a third of them. Results are stored per stop arrival and summarised per route and hour: on-time %, median and p90 delay, how many buses the feed showed, and sample sizes.
+
+**Key concepts.**
+- **Headway**: the gap between consecutive buses. For "every 15 min" service it's what passengers feel.
+- **Coverage / survivorship**: you can only measure what you see. Missing GPS looks like missing buses, so every statistic carries how much of the route was visible.
+- **Interpolation**: estimate a value between two measurements, assuming steady movement between them.
+- **Percentiles in SQL**: `percentile_cont(0.9) WITHIN GROUP (ORDER BY ...)` computes the p90 per group inside Postgres.
+
+**Likely questions.**
+
+1. *Why don't you just compare GPS time with the timetable, like "the 6:05 bus was 3 min late"?*
+   Rapid KL publishes headways ("every 20 min"), not fixed times, so there is no "6:05 bus". The feed does give each run's real departure time, and the timetable gives travel time between stops. So I measure delay relative to the bus's own departure: if it left at 6:07 and the timetable allows 12 min to stop X, it's due at 6:19.
+
+2. *How do you know your numbers mean anything?*
+   I measured instead of assuming. The detector finds a median 95% of the stops a bus passes, and GPS tracks pass a median 15 m from the stops they match. When I found the feed shows only ~27-34% of scheduled buses, I stopped and changed the main metric, because headways would have mostly measured missing GPS. Every statistic carries its sample size and coverage, and our own outages are excluded. I also say clearly that these are estimates: arrival times are biased a few seconds early, and "on time" is measured from the departure, not from a published time.
+
+3. *Loop routes start and end at the same stop. How do you avoid matching the end when the bus is just starting?*
+   Matching only moves forward through the stop list, and a stop at the same place as an earlier stop can only match when it's the very next one expected. So the final stop can't be reached by skipping ahead. A unit test caught exactly this bug before I added the rule.

@@ -106,3 +106,40 @@ Rejected: `structlog` (a dependency for a 20-line job).
 
 **Not pruning `ingestion_runs` yet.**
 Why: about 2,900 rows a day is tiny, and it's useful uptime history. Positions reference runs, so pruning needs care. Revisit if it ever matters.
+
+## Phase 3
+
+**Main measure: delay per bus against its own departure. Headways only where coverage is >= 80%.** (Approved by Howard 2026-11-06.)
+Why: the feed shows only ~27-34% of scheduled runs, and a missing bus looks exactly like a long gap between buses. The live `start_time` is the run's actual departure (first fix a median 0.4 min later), so `delay = arrival - (departure + timetable travel time)` judges each bus on its own.
+Rejected: headways for every route (mostly measures GPS coverage), and headways only (just ~11 routes qualify at midday).
+
+**Delay only for runs whose departure we saw: first GPS fix within -1 to +3 min of `start_time`.** About half of runs qualify. The other 10% are first seen an hour or more after `start_time`, which gave p95 delays of 200+ min.
+Rejected: "the run was detected at its first stop". Buses' GPS gets a median 137 m from the timetable's first-stop pin (terminal bays), so that filter dropped 90% of good runs.
+
+**The first stop gets no delay.** Its scheduled offset is 0, so it is the departure itself and would always count as "on time".
+
+**On time = between 1 min early and 5 min late.** A common transit definition. The rule is in Python (`is_on_time`) and stored per arrival, so SQL only averages it. The same applies to the headway rule (`is_regular`: MTA-style wait assessment, +3 min allowance for scheduled headways up to 10 min, +5 min above that).
+
+**Stop arrival = the first moment the GPS track comes within 60 m of the stop, interpolated between fixes, following stop order.**
+Why 60 m: measured on 366 real runs. 30/45/60/80/100/150 m gave median coverage of passed stops of 85/92/95/98/100/100%. Matched tracks pass a median 15 m from the stop (p90 46 m) at 60 m. Larger radii add little and risk matching parallel roads.
+Known bias: "first within 60 m" is up to radius / speed early, about 7 s at 8 m/s.
+Order matters: 956 trips are loops and 1,024 visit a stop twice. A stop at the same place as an earlier one can only match when it's the very next stop (a test caught the bug where it was matched while skipping ahead).
+Rejected: "a fix within 75 m of the stop" (the brief's idea). Fixes are ~300 m apart, so most stops would never get a fix that close.
+
+**Group headways by `(shape_id, stop_sequence, service_date)`, and look up scheduled headways by shape + actual departure time.**
+Why: the trip ID's `_N` index matched the frequency window only 54% of the time, while shape + time matched 88%. Overlapping windows combine as 1/h = 1/h1 + 1/h2. Grouping by sequence keeps a loop's start and end apart. Unknown live trips borrow the stop list of a timetable trip with the same shape (`trip_id` always embeds the `shape_id`).
+
+**Exclude anything our own outages could distort.** Headways spanning a gap of more than 180 s without a successful poll are set to NULL. Coverage hours that overlap an outage are flagged `ingestion_complete = false` and left out of the stats, so the PC sleeping or losing network doesn't look like missing buses. An hour with no complete coverage and no delay data gets no stats row at all, rather than a misleading "0% seen".
+
+**One meaning of "hour" everywhere: the KL clock hour the bus left its first stop.** Delay, coverage and headways then describe the same set of buses.
+Rejected: the arrival hour for delays (it would mix buses that left in different hours with coverage computed by departure).
+
+**Recompute in full, per service day, in one transaction (today + yesterday every 15 min). Rebuild stats in full from the last 14 days.**
+Why: simple and always consistent with the latest code and timetable. Re-running gives identical results (tested). About 1.4 s for 2.6 h of data. Has a `shortcut:` note for when it gets slow.
+Rejected: incremental updates (extra state and edge cases for a job this cheap).
+
+**`stop_arrivals` is kept indefinitely; raw positions are deleted after 14 days.** Arrivals are the product, about 3x fewer rows than the raw GPS.
+
+**Stats percentiles in Postgres (`percentile_cont`), detection in Python.** SQL handles group-by aggregation well. The geometry and stateful matching are much clearer, and testable, in Python.
+
+**Edited the unreleased Phase 3 migration instead of stacking a fix on it.** It was never committed or deployed, so I rolled it back locally and regenerated it. Committed migrations are never edited.

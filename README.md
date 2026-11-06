@@ -2,9 +2,9 @@
 
 Measures how reliable Kuala Lumpur's Rapid KL buses really are, using live GPS positions and the published timetable from Malaysia's open data portal.
 
-> Status: Phase 2 (live ingestion + health check). See [docs/DATA_FINDINGS.md](docs/DATA_FINDINGS.md) for what the real data looks like.
+> Status: Phase 3 (reliability estimation). See [docs/DATA_FINDINGS.md](docs/DATA_FINDINGS.md) for what the real data looks like.
 
-Rapid KL bus timetables are frequency-based ("every 15 min"), not fixed times. So reliability is measured as **headway adherence**, meaning how evenly buses actually arrive compared with the scheduled gap, rather than "minutes late".
+Rapid KL bus timetables are frequency-based ("every 15 min"), not fixed times, and the live feed only carries about a third of scheduled buses. So the main measure is **delay per bus against its own departure**: the feed reports when each run actually left, and the timetable gives the travel time to every stop. Gaps between buses (headways) are reported only for route-hours where the feed shows at least 80% of scheduled runs. Every figure is an **estimate from GPS** and comes with its sample size and coverage.
 
 ## Run it
 
@@ -20,7 +20,7 @@ This starts:
 |---|---|
 | `db` | PostgreSQL 16 on `localhost:5432` |
 | `migrate` | applies Alembic migrations, then exits |
-| `worker` | polls live bus positions every 30 s, reloads the timetable daily after 04:00 KL time, deletes positions older than 14 days |
+| `worker` | polls live bus positions every 30 s, re-estimates arrivals, delays and route stats every 15 min, reloads the timetable daily after 04:00 KL time, deletes positions older than 14 days |
 | `api` | `http://localhost:8000/health` (and `/docs` for the OpenAPI page) |
 
 ```bash
@@ -39,7 +39,10 @@ uv sync
 docker compose up -d db
 uv run alembic upgrade head
 uv run python -m app.worker          # or: uv run uvicorn app.api:app --reload
+uv run python -m app.estimate --days 2   # re-estimate the last 2 service days now
 ```
+
+Performance notes and the EXPLAIN ANALYZE comparison: [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 
 Tests (DB tests need the compose database and are skipped without `TEST_DATABASE_URL`):
 
