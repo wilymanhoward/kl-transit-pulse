@@ -208,6 +208,8 @@ class StopArrival(Base):
         ),
         # The estimator replaces whole service days; stats read the last 14 days.
         Index("ix_stop_arrivals_service_date", "service_date"),
+        # /stops/{id}/next: typical delay at one stop over recent days (see PERFORMANCE.md).
+        Index("ix_stop_arrivals_stop_id_service_date", "stop_id", "service_date"),
     )
 
 
