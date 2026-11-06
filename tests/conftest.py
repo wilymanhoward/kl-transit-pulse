@@ -45,3 +45,25 @@ def engine(monkeypatch: pytest.MonkeyPatch):
     eng = create_engine(url)
     yield eng
     eng.dispose()
+
+
+@pytest.fixture
+def day_of_data(engine, mini_zip: bytes):
+    from tests.scenario import load_scenario
+
+    return load_scenario(engine, mini_zip)
+
+
+@pytest.fixture
+def api(engine):
+    """A test client whose app reads the test database, with caches emptied."""
+    from fastapi.testclient import TestClient
+
+    from app import api as api_module
+
+    api_module.app.dependency_overrides[api_module.get_engine] = lambda: engine
+    for cache in (api_module.stats_cache, api_module.next_cache):
+        cache.clear()
+    api_module.timetables.value = None
+    yield TestClient(api_module.app)
+    api_module.app.dependency_overrides.clear()

@@ -6,10 +6,9 @@ from threading import Event
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
+from fastapi.testclient import TestClient  # noqa: F401  (type of the `api` fixture)
 from sqlalchemy import Engine, func, insert, select
 
-from app.api import app, get_engine
 from app.config import Settings
 from app.models import IngestionRun, VehiclePosition
 from app.realtime import delete_old_positions, fetch_feed, ingest_once
@@ -150,13 +149,6 @@ def test_worker_survives_database_outage(mini_zip: bytes) -> None:
 
 
 # ---------- /health ----------
-
-
-@pytest.fixture
-def api(engine: Engine):
-    app.dependency_overrides[get_engine] = lambda: engine
-    yield TestClient(app)
-    app.dependency_overrides.clear()
 
 
 def test_health_unhealthy_when_nothing_ingested(api: TestClient) -> None:
