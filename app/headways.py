@@ -1,10 +1,16 @@
-"""Pure headway estimation: GPS fixes + stop list in, stop arrivals and headways out.
+"""Pure reliability estimation: GPS fixes + stop list in, stop arrivals, delays and
+headways out.
 
 No I/O here, so every edge case is unit-testable. app/estimate.py does the database side.
 
-These are ESTIMATES from GPS. Rapid KL timetables are frequency-based ("every 20 min"),
-so we don't measure "minutes late"; we measure the gap between consecutive buses at a
-stop (the headway) and compare it with the scheduled gap.
+These are ESTIMATES from GPS, not official figures. Two measures:
+  * Delay (main): the realtime feed's trip start_time is the run's actual departure, and
+    stop_times gives the scheduled travel time to each stop. delay = arrival -
+    (departure + scheduled travel time). Each bus is judged on its own, so the ~70% of
+    buses missing from the feed don't distort it.
+  * Headway (only where coverage is high): the gap between consecutive buses at a stop
+    vs the scheduled gap. A missing bus looks like a long gap, so it's only trusted for
+    route-hours where we saw most of the scheduled runs (see app/estimate.py).
 
 Arrival detection, per bus run:
   1. Anchor: start at the stop nearest the run's first fix (earliest one if tied, so a
@@ -23,10 +29,12 @@ import math
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from itertools import pairwise
+from zoneinfo import ZoneInfo
 
 EARTH_RADIUS_M = 6_371_000
+KL = ZoneInfo("Asia/Kuala_Lumpur")
 
 
 @dataclass(frozen=True)
@@ -42,6 +50,7 @@ class StopPoint:
     stop_id: str
     lat: float
     lon: float
+    offset_secs: int = 0  # scheduled travel time from the trip's first stop
 
 
 @dataclass(frozen=True)
@@ -186,3 +195,48 @@ def is_regular(headway_secs: int, scheduled_secs: int) -> bool:
     schedule for frequent service (<= 10 min), or 5 min over for less frequent service."""
     allowance = 180 if scheduled_secs <= 600 else 300
     return headway_secs <= scheduled_secs + allowance
+
+
+# ---------- delay (per bus, against its own departure) ----------
+
+ON_TIME_EARLY_SECS = 60  # common transit definition: <= 1 min early ...
+ON_TIME_LATE_SECS = 300  # ... and <= 5 min late
+DEPARTURE_SEEN_WINDOW = (-60, 180)  # first fix this close to start_time = departure seen
+
+
+def service_day_secs(t: datetime, service_date: date) -> float:
+    """Seconds since midnight (KL) at the start of the service day. A bus at 00:20 on
+    the next calendar day, still running the previous day's service, gives 87,600."""
+    midnight = datetime.combine(service_date, datetime.min.time(), KL)
+    return (t - midnight).total_seconds()
+
+
+def departure_seen(first_fix: datetime, service_date: date, start_secs: int | None) -> bool:
+    """Was the run's first GPS fix close to its start_time? Otherwise start_time may not
+    be when this bus really left (10% of runs are first seen an hour or more later)."""
+    if start_secs is None:
+        return False
+    lag = service_day_secs(first_fix, service_date) - start_secs
+    return DEPARTURE_SEEN_WINDOW[0] <= lag <= DEPARTURE_SEEN_WINDOW[1]
+
+
+def delay_secs(arrived_at: datetime, service_date: date, start_secs: int, offset_secs: int) -> int:
+    """Positive = late. Scheduled arrival = actual departure + timetable travel time."""
+    return round(service_day_secs(arrived_at, service_date) - (start_secs + offset_secs))
+
+
+def is_on_time(delay: int) -> bool:
+    return -ON_TIME_EARLY_SECS <= delay <= ON_TIME_LATE_SECS
+
+
+# ---------- coverage ----------
+
+
+def departures_per_hour(windows: Iterable[Window]) -> dict[int, int]:
+    """Scheduled departures per service-day hour (can be >= 24 after midnight).
+    A window departs at start, start + headway, ... while before end."""
+    counts: dict[int, int] = defaultdict(int)
+    for w in windows:
+        for secs in range(w.start_secs, w.end_secs, w.headway_secs):
+            counts[secs // 3600] += 1
+    return dict(counts)

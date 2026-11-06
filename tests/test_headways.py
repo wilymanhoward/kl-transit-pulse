@@ -15,10 +15,15 @@ from app.headways import (
     Window,
     assign_headways,
     closest_on_segment,
+    delay_secs,
+    departure_seen,
+    departures_per_hour,
     detect_arrivals,
     distance_m,
+    is_on_time,
     is_regular,
     scheduled_headway,
+    service_day_secs,
 )
 
 LAT = 3.1
@@ -222,3 +227,69 @@ def test_unsorted_input_is_sorted_by_time() -> None:
 )
 def test_wait_assessment_allowance(headway, scheduled, regular) -> None:
     assert is_regular(headway, scheduled) is regular
+
+
+# ---------- delay ----------
+
+DAY = date(2026, 11, 6)
+KL_MIDNIGHT = datetime(2026, 11, 5, 16, 0, tzinfo=UTC)  # 00:00 KL on 6 Nov
+
+
+def kl_secs(secs: float) -> datetime:
+    return KL_MIDNIGHT + timedelta(seconds=secs)
+
+
+def test_service_day_secs_past_midnight() -> None:
+    assert service_day_secs(kl_secs(10 * 3600), DAY) == 36000
+    # 00:20 on 7 Nov while still running 6 Nov's service:
+    assert service_day_secs(datetime(2026, 11, 6, 16, 20, tzinfo=UTC), DAY) == 87600
+
+
+@pytest.mark.parametrize(
+    ("arrival_secs", "expected_delay", "on_time"),
+    [
+        (36000 + 600, 0, True),  # left 10:00, scheduled 10 min to this stop, arrived 10:10
+        (36000 + 600 + 300, 300, True),  # 5 min late: still on time
+        (36000 + 600 + 301, 301, False),  # late
+        (36000 + 600 - 60, -60, True),  # 1 min early: on time
+        (36000 + 600 - 61, -61, False),  # early
+    ],
+)
+def test_delay_against_own_departure(arrival_secs, expected_delay, on_time) -> None:
+    d = delay_secs(kl_secs(arrival_secs), DAY, start_secs=36000, offset_secs=600)
+    assert d == expected_delay
+    assert is_on_time(d) is on_time
+
+
+def test_delay_for_trip_running_past_midnight() -> None:
+    # Departed 23:50 (85,800 s), timetable says 25 min to this stop -> due 00:15 next day.
+    arrived = datetime(2026, 11, 6, 16, 18, tzinfo=UTC)  # 00:18 KL on 7 Nov
+    assert delay_secs(arrived, DAY, start_secs=85800, offset_secs=1500) == 180
+
+
+@pytest.mark.parametrize(
+    ("first_fix_secs", "seen"),
+    [
+        (36000, True),
+        (36000 - 60, True),
+        (36000 + 180, True),
+        (36000 + 181, False),
+        (36000 + 3600, False),
+        (36000 - 61, False),
+    ],  # fmt: skip
+)
+def test_departure_seen(first_fix_secs, seen) -> None:
+    assert departure_seen(kl_secs(first_fix_secs), DAY, 36000) is seen
+
+
+def test_departure_unknown_without_start_time() -> None:
+    assert departure_seen(kl_secs(36000), DAY, None) is False
+
+
+# ---------- coverage ----------
+
+
+def test_departures_per_hour() -> None:
+    windows = [Window(6 * 3600, 7 * 3600, 1200), Window(23 * 3600 + 1800, 25 * 3600, 1800)]
+    # 06:00, 06:20, 06:40 | 23:30 | 24:00, 24:30 (end is exclusive: no 25:00 departure)
+    assert departures_per_hour(windows) == {6: 3, 23: 1, 24: 2}
