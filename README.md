@@ -2,7 +2,7 @@
 
 Measures how reliable Kuala Lumpur's Rapid KL buses really are, using live GPS positions and the published timetable from Malaysia's open data portal.
 
-> Status: Phase 1 (database + static timetable). See [docs/DATA_FINDINGS.md](docs/DATA_FINDINGS.md) for what the real data looks like.
+> Status: Phase 2 (live ingestion + health check). See [docs/DATA_FINDINGS.md](docs/DATA_FINDINGS.md) for what the real data looks like.
 
 Rapid KL bus timetables are frequency-based ("every 15 min"), not fixed times. So reliability is measured as **headway adherence**, meaning how evenly buses actually arrive compared with the scheduled gap, rather than "minutes late".
 
@@ -14,7 +14,21 @@ Needs Docker Desktop.
 docker compose up --build -d
 ```
 
-This starts PostgreSQL 16, applies the migrations and loads the current timetable, then the `app` container exits (`docker compose logs app` shows the load). The database stays up on `localhost:5432`.
+This starts:
+
+| Service | What it does |
+|---|---|
+| `db` | PostgreSQL 16 on `localhost:5432` |
+| `migrate` | applies Alembic migrations, then exits |
+| `worker` | polls live bus positions every 30 s, reloads the timetable daily after 04:00 KL time, deletes positions older than 14 days |
+| `api` | `http://localhost:8000/health` (and `/docs` for the OpenAPI page) |
+
+```bash
+curl localhost:8000/health        # 200 when data is fresh, 503 when stale
+docker compose logs -f worker     # JSON log lines
+```
+
+Settings (see `.env.example`): `POLL_SECONDS` (default 30, minimum 15 to respect the 4 req/min limit), `RETENTION_DAYS` (14), `STALE_AFTER_SECONDS` (300).
 
 ## Develop
 
@@ -24,7 +38,7 @@ Needs Python 3.12 and [uv](https://docs.astral.sh/uv/).
 uv sync
 docker compose up -d db
 uv run alembic upgrade head
-uv run python -m app.gtfs_static
+uv run python -m app.worker          # or: uv run uvicorn app.api:app --reload
 ```
 
 Tests (DB tests need the compose database and are skipped without `TEST_DATABASE_URL`):

@@ -71,3 +71,20 @@ Measure reliability the way transit agencies do for frequent, headway-based serv
 2. **Running-time adherence (secondary).** Compare how long a bus takes between stops with the template offsets in `stop_times.txt`, for example "the timetable allows 22 min from A to B, buses took 31 min at 6 pm".
 
 Both are honest estimates from GPS, and both work without a fixed timetable. The API in Phase 4 would then report "on-time %" as "% of gaps within X min of the scheduled headway". `/stops/{id}/next` would become "expected next bus" from live positions plus the headway, not a list of timetabled departures.
+
+## Phase 2 observations (live worker, 2026-11-06 12:17 to 12:20 Kuala Lumpur time)
+
+From 6 consecutive polls, 30 s apart. A short window, so these are early signs, not conclusions.
+
+| Fact | Value |
+|---|---|
+| Vehicles per snapshot | 87 to 93 (midday weekday) |
+| Header timestamp | new on every poll, 30 s apart |
+| Feed age when fetched (header vs our clock) | 1 to 5 s (on Nov 5 it was 29 s) |
+| Buses repeating an already-seen GPS fix | 10 to 33% of each snapshot (dropped by `ON CONFLICT`) |
+| Entities dropped as invalid | 0 |
+| Storage | ~70 new rows per poll, about 200k rows/day, about 2.8M rows at 14-day retention |
+
+The Phase 1 worry (two downloads 20 min apart with the same byte size) didn't show up here: every snapshot had a new header. The stale/duplicate check stays in place regardless.
+
+Most buses (67 to 90% per poll) send a new fix every 30 s poll; the rest are slower. At ~10 m/s that means about 300 m or more between fixes, much more than the 75 m stop radius in the original brief. **Phase 3 can't rely on catching a bus within 75 m of a stop.** It will need to interpolate between two fixes (when did the bus pass the stop?) rather than wait for a fix near it. Phase 3 should confirm the fix interval over more data first.

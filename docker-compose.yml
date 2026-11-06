@@ -17,15 +17,41 @@ services:
       timeout: 3s
       retries: 20
 
-  app:
+  # One-shot: apply migrations, then exit. worker and api wait for it to succeed,
+  # so only one process ever migrates.
+  migrate:
     build: .
-    environment:
+    image: kl-transit-pulse
+    environment: &app-env
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-transit}:${POSTGRES_PASSWORD:-transit}@db:5432/${POSTGRES_DB:-transit}
+      POLL_SECONDS: ${POLL_SECONDS:-30}
+      RETENTION_DAYS: ${RETENTION_DAYS:-14}
+      STALE_AFTER_SECONDS: ${STALE_AFTER_SECONDS:-300}
     depends_on:
       db:
         condition: service_healthy
-    # Phase 1: migrate, load the timetable, exit. Later phases replace this with the API/worker.
-    command: ["sh", "-c", "alembic upgrade head && python -m app.gtfs_static"]
+    command: ["alembic", "upgrade", "head"]
+
+  # Polls realtime every 30 s, refreshes the timetable daily, prunes old positions.
+  worker:
+    image: kl-transit-pulse
+    environment: *app-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+
+  api:
+    image: kl-transit-pulse
+    environment: *app-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "${API_PORT:-8000}:8000"
+    restart: unless-stopped
+    command: ["uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8000"]
 
 volumes:
   pgdata:

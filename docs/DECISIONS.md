@@ -70,3 +70,39 @@ Rejected: SQLite for tests, because it behaves differently from Postgres.
 
 **Fixture feed kept as plain `.txt` files and zipped at test time.**
 Why: readable and shows up in diffs. The brief said "fixture ZIP"; this is the same data in a reviewable form.
+
+## Phase 2
+
+**A plain loop in its own worker process, not APScheduler.**
+Why: one job per tick, run in order. That makes the rate limit easy to prove: one realtime request per tick, ticks start at least `poll_seconds` apart, and `Settings` refuses anything under 15 s (60/4), so the worker can't exceed 4 req/min. It also means no extra dependency, and the API process stays separate (it can restart without stopping ingestion).
+Rejected: APScheduler (overlapping-job and missed-run settings to explain, with no benefit for 3 jobs). Also rejected: a token-bucket rate limiter (not needed when one request per tick is guaranteed).
+
+**Backoff between ticks, not retries inside a tick.**
+Why: after n consecutive failures, wait `30 s × 2^n`, capped at 5 min, and never less than the server's `Retry-After`. Any exception counts: 429, 5xx, timeout, corrupt protobuf, database down. Retries inside a tick would multiply requests per tick and break the "one request per tick" proof.
+Rejected: random jitter (it matters when many clients retry at once; there's one client here).
+
+**Two layers of de-duplication.**
+1. Snapshot level: skip a feed whose header timestamp is ≤ the last processed one, or older than 5 min (`status='skipped'`). The last timestamp is read from `ingestion_runs.feed_timestamp`, so this survives a restart.
+2. Row level: `INSERT ... ON CONFLICT (vehicle_id, observed_at) DO NOTHING`. A new snapshot often repeats a bus whose GPS hasn't updated.
+
+**Store the vehicle's own GPS `timestamp` as `observed_at`, not the fetch time.**
+Why: positions are 30 to 100 s old when we fetch them. Fall back to the header time only if a vehicle has none.
+
+**Reject entities without a vehicle id or a valid position, and treat (0, 0) as "no GPS fix".**
+Why: the feed comes from outside, so validate at the boundary. A row we can't de-duplicate or place on a map is useless. Bad `start_time` or `start_date` values become NULL, and the row is kept.
+
+**`/health` checks both ingestion runs and the newest GPS fix, and returns 503 when unhealthy.**
+Why: a run can "succeed" while the upstream feed is frozen. Only the age of the newest position catches that. 503 lets Docker or a hosting platform alert or restart on it.
+
+**The daily timetable refresh lives in the worker (after 04:00 Kuala Lumpur time).**
+Why: it's one more job in the same loop, and it loads the timetable on first start too. After a failure it retries every 15 min, not every tick.
+
+**One-shot `migrate` service in Compose.**
+Why: `worker` and `api` both wait for `service_completed_successfully`, so exactly one process runs migrations and nothing starts against a half-migrated schema.
+
+**JSON-lines logs with standard `logging` and a 20-line formatter.**
+Why: fields such as `run_id`, `inserted` and `feed_age_s` can be searched without parsing free text. httpx's per-request INFO log is turned down because it adds 2,880 lines a day.
+Rejected: `structlog` (a dependency for a 20-line job).
+
+**Not pruning `ingestion_runs` yet.**
+Why: about 2,900 rows a day is tiny, and it's useful uptime history. Positions reference runs, so pruning needs care. Revisit if it ever matters.

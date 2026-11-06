@@ -39,3 +39,23 @@
 
 3. *Why doesn't vehicle_positions have a foreign key to trips?*
    About 15% of live buses report trip IDs that aren't in the timetable, and the timetable is replaced daily. A foreign key would throw away real observations or block the reload. I keep the raw IDs and join when analysing.
+
+## Phase 2: live ingestion
+
+**What it is, in plain English.** A worker process wakes up every 30 seconds, downloads where every bus is, and saves the new positions. If the download fails, it waits longer each time (60 s, 120 s, 240 s, capped at 5 min) instead of hammering the server, and it never crashes. Once a day it reloads the timetable. Every hour it deletes positions older than 14 days. `GET /health` reports whether data is still arriving.
+
+**Key concepts.**
+- **Exponential backoff**: after each consecutive failure, double the wait. This gives a struggling server room to recover and keeps us under the rate limit.
+- **Idempotent insert**: `ON CONFLICT DO NOTHING` means inserting the same GPS fix twice has no effect, so repeats in the feed are harmless.
+- **Liveness vs freshness**: the worker can be "running fine" while the feed it reads is frozen. Health checks the data's age, not just the process.
+
+**Likely questions.**
+
+1. *How do you guarantee you never exceed 4 requests per minute?*
+   Each tick makes exactly one realtime request, and the next tick starts at least `poll_seconds` after the previous one began. The config refuses values below 15 s, which is 60/4. Retries don't happen inside a tick, so a failure can only make the gap longer. A test runs the loop with mocked HTTP (429, 503, timeout) and checks the exact waits.
+
+2. *What happens if the database goes down?*
+   Every job in the loop is wrapped in its own try/except, so the error is logged and the loop backs off. When Postgres comes back, the next tick just works. There's a test that points the worker at a dead database and checks that it keeps looping with growing delays. `restart: unless-stopped` in Compose covers a real crash.
+
+3. *Why did you store the bus's own timestamp instead of the time you fetched it?*
+   The feed is 30 to 100 s old when we receive it, and buses report at different moments. Reliability maths needs to know when the bus was actually there. The vehicle timestamp is also part of the de-duplication key: same bus + same GPS time = same fix.
