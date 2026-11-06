@@ -1,34 +1,11 @@
-"""Loader tests against a real Postgres (skipped if TEST_DATABASE_URL is unset).
-
-Each test rebuilds the schema through Alembic, so the migration itself is tested too.
-"""
-
-import os
-from pathlib import Path
+"""Loader tests against a real Postgres (the `engine` fixture skips without a test DB)."""
 
 import pytest
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import Engine, create_engine, func, select
+from sqlalchemy import Engine, func, select
 
 from app.gtfs_static import import_static
 from app.models import IngestionRun, StopTime, Trip
 from tests.conftest import FIXTURE_DIR, make_zip
-
-TEST_URL = os.getenv("TEST_DATABASE_URL")
-pytestmark = pytest.mark.skipif(not TEST_URL, reason="TEST_DATABASE_URL not set")
-ROOT = Path(__file__).resolve().parent.parent
-
-
-@pytest.fixture
-def engine(monkeypatch: pytest.MonkeyPatch) -> Engine:
-    monkeypatch.setenv("DATABASE_URL", TEST_URL)
-    cfg = Config(str(ROOT / "alembic.ini"))
-    command.downgrade(cfg, "base")
-    command.upgrade(cfg, "head")
-    eng = create_engine(TEST_URL)
-    yield eng
-    eng.dispose()
 
 
 def count(engine: Engine, model: type) -> int:
