@@ -22,6 +22,35 @@
 
 Sources: [InfoQ on the 2026 A1 limit cut](https://infoq.com/news/2026/07/oracle-cloud-free-tier-limits/), [Oracle Always Free resources (official)](https://docs.oracle.com/en-us/iaas/Content/FreeTier/resourceref.htm), [OCI reclamation rules summary](https://oracommit.blogspot.com/2026/02/understanding-oci-always-free-compute.html), [Render pricing 2026](https://temps.sh/blog/render-pricing-2026), [Hetzner price adjustment (official)](https://docs.hetzner.com/general/infrastructure-and-availability/price-adjustment/), [Hetzner plans and availability 2026](https://www.bitdoze.com/hetzner-cloud-cost-optimized-plans).
 
+## Chosen: Oracle Cloud Always Free, step by step
+
+Decision (Howard, 2026-11-06): option A. Steps 1-4 need you; nobody else should enter your card or create your account. Step 5 is one command.
+
+1. **Sign up** at <https://www.oracle.com/cloud/free/>. Pick **Singapore** as the *home region*: it's the closest to the data source, and **the home region can't be changed later**. A card is required for identity verification.
+2. **Upgrade to Pay As You Go** (Billing & Cost Management → *Upgrade and Manage Payment*). Always Free resources stay free. This is what stops Oracle reclaiming the VM as "idle" (see above).
+3. **Set a budget alert** so a mistake can't surprise you: Billing & Cost Management → *Budgets* → *Create Budget*, monthly amount **USD 1**, alert when *actual* spend reaches **50%**, sent to your email.
+4. **Create the VM**: Compute → *Instances* → *Create instance*:
+   - **Image:** Canonical Ubuntu 24.04. **Shape:** *Ampere* → `VM.Standard.A1.Flex` with **2 OCPU, 12 GB**. Check it says "Always Free-eligible".
+   - **Networking:** the default new VCN, *assign a public IPv4 address*.
+   - **SSH key:** *Paste public keys*, with the contents of `~/.ssh/oracle_kl_transit.pub` (created on your PC for this, one line starting `ssh-ed25519`).
+   - **Boot volume:** default (~47 GB; Always Free includes up to 200 GB).
+   - If you get **"Out of host capacity"**: try another *availability domain* in the same screen, or retry later. A1 capacity comes and goes.
+5. **Install**: from your PC, with the VM's public IP:
+   ```bash
+   ssh -i ~/.ssh/oracle_kl_transit ubuntu@<public-ip> "curl -fsSL https://raw.githubusercontent.com/wilymanhoward/kl-transit-pulse/main/scripts/server_setup.sh | bash"
+   ```
+   [`scripts/server_setup.sh`](../scripts/server_setup.sh) installs Docker, clones the repo, creates `.env` with a random database password (readable only by `ubuntu`), starts the stack and schedules nightly backups. It's safe to re-run for updates.
+
+**Nothing is public after this**: only SSH (port 22) is open, which is Oracle's default. To use the API or `/docs`, open a tunnel from your PC:
+
+```bash
+ssh -i ~/.ssh/oracle_kl_transit -L 8000:127.0.0.1:8000 ubuntu@<public-ip>
+```
+
+and browse to `http://127.0.0.1:8000/docs`. A public HTTPS address (domain + Caddy, below) can come with the dashboard in Phase 6.
+
+**Verified before deploying:** the image builds for `linux/arm64` (Docker buildx, 29 s under emulation), runs as `aarch64`, and imports every module with psycopg's compiled ARM wheel. `server_setup.sh` passes shellcheck. Not yet verified: an actual run on an Oracle VM.
+
 ## Deploy (any Linux VM with Docker: Ubuntu 24.04 assumed)
 
 The images are multi-arch (`python:3.12-slim`, `postgres:16`, uv), and psycopg ships ARM wheels, so this works on Oracle's ARM VMs too. (I haven't run it on ARM yet.)
@@ -32,7 +61,7 @@ curl -fsSL https://get.docker.com | sudo sh
 sudo usermod -aG docker $USER && newgrp docker
 
 # 2. Code
-git clone https://github.com/<you>/kl-transit-pulse.git && cd kl-transit-pulse
+git clone https://github.com/wilymanhoward/kl-transit-pulse.git && cd kl-transit-pulse
 
 # 3. Config: copy, then set a strong POSTGRES_PASSWORD (and the matching DATABASE_URL)
 cp .env.example .env
