@@ -143,3 +143,26 @@ Rejected: incremental updates (extra state and edge cases for a job this cheap).
 **Stats percentiles in Postgres (`percentile_cont`), detection in Python.** SQL handles group-by aggregation well. The geometry and stateful matching are much clearer, and testable, in Python.
 
 **Edited the unreleased Phase 3 migration instead of stacking a fix on it.** It was never committed or deployed, so I rolled it back locally and regenerated it. Committed migrations are never edited.
+
+## Phase 4
+
+**`/stops/{id}/next` returns two lists: `live` and `scheduled`.**
+Why: the timetable only says "every N minutes", so a list of timetabled buses can only be an approximate grid. What a rider wants is "which buses are actually coming". `live` uses buses heard from in the last 5 min whose run still has this stop ahead. Their position is found by re-running the Phase 3 stop detection on their last 4 h of GPS. ETA = actual departure + travel time to this stop + current delay at the last stop passed. `scheduled` is the grid for the next 90 min, each entry with the typical (median) delay at *this stop* for that departure hour over 14 days, plus its sample size.
+Rejected: only the timetable grid (looks precise, isn't), and only live buses (two thirds of buses are invisible in the feed).
+
+**Every response time is in Kuala Lumpur time (`+08:00`).** A pydantic `PlainSerializer` on one `KLTime` type. Internally everything stays timezone-aware UTC. Found when a test showed some fields in UTC and others in +08:00.
+
+**One error shape for every 4xx/5xx: `{"error": {"status", "message", "details"}}`.** Handlers for HTTP errors, validation errors (`details` lists each bad field and the problem) and database errors (503 "database unavailable", with no SQL or hostnames in the body; the real error goes to the log). `/health` keeps its own body because monitoring reads it.
+
+**Validation at the edge:** `hour` 0-23, `day_type` weekday|weekend, `limit` 1-50, `offset` 0-1000, `min_buses` >= 1, IDs limited to `[A-Za-z0-9_-]{1,32}`. Defaults for `hour`/`day_type` come from the current KL time. Unknown route or stop → 404. A known route with no data for that hour → 200 with an empty list (not an error).
+
+**`/routes/worst` ranks by on-time % (lowest first), then median delay, and hides route-hours with fewer than `min_buses` (default 5) bus runs.** The response includes `total` and echoes `limit`/`offset` for pagination.
+Rejected: ranking by median delay alone. It hides routes that are often early, and early is also unreliable.
+
+**In-process TTL cache: 60 s for route stats, 15 s for next buses.** Stats only change every 15 min. Errors are never cached (tested).
+`shortcut:` each API process keeps its own cache; use Redis if several replicas must agree.
+The timetable (~1-2 s to build) is cached per process and rebuilt only when a newer static load has finished.
+
+**Index `stop_arrivals(stop_id, service_date)`**, measured 35.4 → 3.8 ms on a 606k-row table (see PERFORMANCE.md). No new index for `live`: it reads `vehicle_positions` by `observed_at` and `(vehicle_id, observed_at)`, both already indexed.
+
+**Thin endpoints.** `app/api.py` validates and shapes responses, `app/queries.py` reads the database, and `app/schemas.py` defines the response models (and the OpenAPI docs). Each part can be tested and explained on its own.

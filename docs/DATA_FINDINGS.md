@@ -129,3 +129,7 @@ Cross-check: about 90 vehicles report at any moment, while the timetable needs r
 - All runs: median delay 5.1 min, but p95 = 201 min. That's garbage from runs first seen long after their `start_time`.
 - Runs seen at departure: median 4.5 min, p95 17.5 min. Delay grows along the trip (median 2.3 min in the first 15 scheduled minutes, about 10 min later on), which fits midday traffic.
 - Buses' GPS gets a median 137 m from the timetable's *first* stop (terminal bays aren't at the stop pin), so "detected at the first stop" is not a usable filter. "First fix within 3 min of `start_time`" is.
+
+## Phase 4 observation: some routes run early, not late
+
+In the first real `/routes/worst` result (weekday 12:00, 3+ buses), route **U6000** ranks 2nd worst with 18% on time but a **median delay of -222 s**: its buses mostly reach stops 3-4 min *before* the timetable's travel time says they should. Possible explanations, none verified yet: the timetable's travel times are padded for peak traffic and are slack at midday; or for this route the feed's `start_time` is set slightly after the bus actually leaves. Early is still "not on time" under the -1/+5 min rule. With more data, check whether this is consistent per route and per hour.

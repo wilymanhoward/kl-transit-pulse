@@ -80,3 +80,24 @@
 
 3. *Loop routes start and end at the same stop. How do you avoid matching the end when the bus is just starting?*
    Matching only moves forward through the stop list, and a stop at the same place as an earlier stop can only match when it's the very next one expected. So the final stop can't be reached by skipping ahead. A unit test caught exactly this bug before I added the rule.
+
+## Phase 4: API
+
+**What it is, in plain English.** A FastAPI service with three endpoints. *Reliability* for one route, hour by hour. The *worst routes* for an hour, ignoring routes we barely saw. And *next buses at a stop*: buses actually on their way (from live GPS) plus the timetable for the next 90 minutes with typical delays. Inputs are validated, every error has the same JSON shape, hot responses are cached for a short time, and `/docs` shows interactive documentation generated from the code.
+
+**Key concepts.**
+- **Validation at the boundary**: check every input where it enters (here, FastAPI `Query`/`Path` constraints) so the rest of the code can trust it.
+- **Pagination**: `limit` + `offset` + `total`, so a client can page through results without the server sending everything.
+- **TTL cache**: keep a computed answer for N seconds; trade a little freshness for a lot less database work.
+- **Serialisation**: converting Python objects to JSON. One place decides how times look (KL time, ISO 8601).
+
+**Likely questions.**
+
+1. *What happens if someone sends `hour=25` or a route ID with SQL in it?*
+   FastAPI rejects it before my code runs: 422 with `{"error": {"message": "invalid request", "details": [{"field": "hour", ...}]}}`. Route and stop IDs must match `[A-Za-z0-9_-]{1,32}`, and queries are parameterised by SQLAlchemy anyway, so input is never pasted into SQL. Tests cover 11 bad-input cases.
+
+2. *Why cache, and how do you stop it serving wrong data?*
+   The reliability stats are only recomputed every 15 minutes, so a 60-second cache can't be meaningfully stale, and it cut repeated requests from ~7 ms to ~2 ms. Errors aren't cached, the cache is bounded in size, and the timetable cache reloads when a new timetable has been loaded. The limitation: it's per process, so with several replicas I'd move it to Redis.
+
+3. *How does "next bus" work when the timetable has no fixed times?*
+   Two lists. *Live*: buses the feed shows right now, placed on their route by the same stop-matching code as the estimator. Their ETA is when they left, plus the timetable's travel time, plus how late they're running. *Scheduled*: the "every N minutes" grid, clearly marked approximate, with the median delay we've measured at that stop for that hour and the sample size. I don't pretend the grid is a precise timetable.
