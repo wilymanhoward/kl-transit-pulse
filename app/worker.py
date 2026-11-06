@@ -1,5 +1,6 @@
 """Long-running ingestion worker: poll realtime every 30 s, refresh the timetable daily,
-delete old positions hourly. Every job is wrapped so one failure never stops the loop.
+delete old positions hourly, re-estimate reliability every 15 min. Every job is wrapped
+so one failure never stops the loop.
 
 Run: python -m app.worker
 """
@@ -18,6 +19,7 @@ from sqlalchemy import Engine, func, select
 
 from app.config import Settings
 from app.db import make_engine
+from app.estimate import run_estimation
 from app.gtfs_static import download as download_static
 from app.gtfs_static import import_static
 from app.logging_setup import setup_logging
@@ -36,6 +38,9 @@ KL = ZoneInfo("Asia/Kuala_Lumpur")
 STATIC_REFRESH_HOUR = 4  # data.gov.my recommends refreshing static GTFS daily around 04:00
 STATIC_RETRY_SECONDS = 15 * 60  # after a failed timetable load, don't retry every tick
 RETENTION_EVERY_SECONDS = 60 * 60
+# shortcut: re-estimates today + yesterday in full (~1-2 s now); if a full day of data
+# makes this slow enough to delay polls, move it to its own process.
+ESTIMATE_EVERY_SECONDS = 15 * 60
 
 
 def next_delay(
@@ -86,7 +91,7 @@ def run_forever(
     failures = 0
     last_feed_ts: datetime | None = None
     feed_ts_loaded = False
-    last_static_attempt = last_retention = -float("inf")
+    last_static_attempt = last_retention = last_estimate = -float("inf")
     stale_after = timedelta(seconds=settings.stale_after_seconds)
 
     while not stop.is_set():
@@ -122,6 +127,13 @@ def run_forever(
                 last_retention = tick_start
             except Exception:
                 log.exception("retention cleanup failed")
+
+        if tick_start - last_estimate >= ESTIMATE_EVERY_SECONDS:
+            last_estimate = tick_start  # set first: a failing estimate retries in 15 min
+            try:
+                run_estimation(engine, days=2, now=now())
+            except Exception:
+                log.exception("estimation failed")
 
         delay = next_delay(failures, settings, time.monotonic() - tick_start, retry_after)
         if failures:
