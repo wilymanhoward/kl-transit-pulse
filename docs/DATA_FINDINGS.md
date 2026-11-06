@@ -88,3 +88,42 @@ From 6 consecutive polls, 30 s apart. A short window, so these are early signs, 
 The Phase 1 worry (two downloads 20 min apart with the same byte size) didn't show up here: every snapshot had a new header. The stale/duplicate check stays in place regardless.
 
 Most buses (67 to 90% per poll) send a new fix every 30 s poll; the rest are slower. At ~10 m/s that means about 300 m or more between fixes, much more than the 75 m stop radius in the original brief. **Phase 3 can't rely on catching a bus within 75 m of a stop.** It will need to interpolate between two fixes (when did the bus pass the stop?) rather than wait for a fix near it. Phase 3 should confirm the fix interval over more data first.
+
+## Phase 3 findings (2.6 h of live data, 13,720 positions, 332 runs, 2026-11-06 midday)
+
+| Fact | Value | Consequence |
+|---|---|---|
+| Gap between a bus's fixes | p25 30 s, median 30 s, p75 55 s, p90 60 s, p99 ~19 min | Usually ~300 m between fixes |
+| Distance between consecutive stops | p10 176 m, median 343 m, p90 793 m | A bus often passes a stop *between* two fixes, so arrival time must be interpolated |
+| Trips that are loops (first stop = last stop) | 956 of 2,121 | Matching must follow stop order, or a loop's end looks like its start |
+| Trips visiting the same stop twice | 1,024 | Same reason; headways are grouped by stop *sequence*, not just stop ID |
+| `trip_id` contains the `shape_id` (`weekday_U7830_U783002_2`) | 2,121 of 2,121 | Unknown live trips can borrow the stop list of a timetable trip with the same shape |
+| `trip_id` starts with the `service_id` | 2,121 of 2,121 | Weekday/weekend known even for unknown trips |
+| Positions whose trip_id isn't in the timetable | 199 of 13,720 (1.5%) | Much lower than the 15% from the single snapshot |
+| Live `start_time` vs first GPS fix | median 0.4 min later | `start_time` is the actual departure time of that run |
+| Live `start_time` inside its own trip's frequency window | 112 of 206 runs (54%) | The trip ID's `_N` index doesn't reliably say which window applies... |
+| ...inside any window of the same shape | 182 of 206 (88%) | ...so look up the scheduled headway by shape + departure time |
+| Frequency windows overlapping within one route+direction | 35 pairs | Combine overlapping windows: 1/h = 1/h1 + 1/h2 |
+| Gaps between windows (e.g. 07:00–07:30) | common | No scheduled headway, so those gaps aren't judged |
+| Ingestion failures | 5 DNS errors + one 59-min gap (the PC lost network / slept) | Headways that span an outage would look like huge waits, so they're excluded |
+
+### The realtime feed only covers about a third of scheduled buses (changes the plan)
+
+Weekday 13:00–14:00 KL, 2026-11-06:
+
+| | Timetable | Seen in realtime feed |
+|---|---|---|
+| Routes with service | 109 | 46 |
+| Departures (runs starting that hour) | 285 | 96 (34%) |
+| Routes with zero buses in the feed | – | 73 of 109 (including the BRT Sunway Line B1000, every 3 min) |
+| Routes with >= 80% of their departures seen | – | 11 |
+
+Cross-check: about 90 vehicles report at any moment, while the timetable needs roughly 240 on the road at midday.
+
+**Consequence:** a headway is the gap between buses *we can see*. If two thirds of a route's buses have no GPS in the feed, an every-5-min route looks like every-15-min. From this data alone, "bus didn't run" and "bus ran without GPS" are impossible to tell apart. Headway statistics are only trustworthy where coverage is near 100%.
+
+**What does work: delay per bus, against its own departure.** The live `start_time` is the run's actual departure. For 175 of 355 runs (49%), the first GPS fix arrives within 3 min of it. Adding the timetable's travel time to each stop (from `stop_times`) gives a scheduled arrival per stop, so `delay = observed arrival − (departure + scheduled travel time)`. Missing buses don't distort it. On the 2.6 h sample:
+
+- All runs: median delay 5.1 min, but p95 = 201 min. That's garbage from runs first seen long after their `start_time`.
+- Runs seen at departure: median 4.5 min, p95 17.5 min. Delay grows along the trip (median 2.3 min in the first 15 scheduled minutes, about 10 min later on), which fits midday traffic.
+- Buses' GPS gets a median 137 m from the timetable's *first* stop (terminal bays aren't at the stop pin), so "detected at the first stop" is not a usable filter. "First fix within 3 min of `start_time`" is.
