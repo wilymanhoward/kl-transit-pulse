@@ -124,10 +124,14 @@ class IngestionRun(Base):
     status: Mapped[str] = mapped_column(String, server_default="running")
     rows_written: Mapped[int | None]
     error: Mapped[str | None] = mapped_column(Text)
+    # Realtime only: the feed header's timestamp, used to spot repeated snapshots.
+    feed_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
         CheckConstraint("kind IN ('realtime', 'static')", name="ck_ingestion_runs_kind"),
+        # 'skipped' = fetched fine but the snapshot was a repeat or too old to store.
         CheckConstraint(
-            "status IN ('running', 'success', 'failed')", name="ck_ingestion_runs_status"
+            "status IN ('running', 'success', 'failed', 'skipped')",
+            name="ck_ingestion_runs_status",
         ),
         # /health asks "latest successful realtime run"; partial index keeps it tiny.
         Index(

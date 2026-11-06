@@ -18,10 +18,11 @@ from collections.abc import Callable
 from datetime import date, datetime
 
 import httpx
-from sqlalchemy import Engine, delete, func, insert, update
+from sqlalchemy import Engine, delete, insert
 
 from app.db import make_engine
-from app.models import Calendar, Frequency, IngestionRun, Route, Stop, StopTime, Trip
+from app.models import Calendar, Frequency, Route, Stop, StopTime, Trip
+from app.runs import fail_run, finish_run, start_run
 
 log = logging.getLogger(__name__)
 
@@ -175,26 +176,13 @@ def load_feed(engine: Engine, tables: dict[type, Rows]) -> int:
 
 def import_static(engine: Engine, fetch: Callable[[], bytes] = download) -> int:
     """Download + parse + load, recording the attempt in ingestion_runs either way."""
-    with engine.begin() as conn:
-        run_id = conn.execute(
-            insert(IngestionRun).values(kind="static").returning(IngestionRun.id)
-        ).scalar_one()
+    run_id = start_run(engine, "static")
     try:
         rows = load_feed(engine, parse_feed(fetch()))
     except Exception as exc:
-        with engine.begin() as conn:
-            conn.execute(
-                update(IngestionRun)
-                .where(IngestionRun.id == run_id)
-                .values(status="failed", finished_at=func.now(), error=repr(exc)[:2000])
-            )
+        fail_run(engine, run_id, exc)
         raise
-    with engine.begin() as conn:
-        conn.execute(
-            update(IngestionRun)
-            .where(IngestionRun.id == run_id)
-            .values(status="success", finished_at=func.now(), rows_written=rows)
-        )
+    finish_run(engine, run_id, "success", rows_written=rows)
     return rows
 
 
