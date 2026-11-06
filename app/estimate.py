@@ -74,7 +74,7 @@ def day_start(service_date: date) -> datetime:
 
 
 class Timetable:
-    """The parts of the static timetable the estimator needs, loaded once per run."""
+    """The parts of the static timetable the estimator and API need, loaded in one go."""
 
     def __init__(self, conn) -> None:
         self.stops_by_trip: dict[str, list[StopPoint]] = defaultdict(list)
@@ -110,14 +110,26 @@ class Timetable:
 
         self.windows_by_shape: dict[tuple[str, str], list[Window]] = defaultdict(list)
         self.windows_by_route: dict[tuple[str, str], list[Window]] = defaultdict(list)
-        for route_id, shape_id, service_id, start, end, headway in conn.execute(
-            select(Trip.route_id, Trip.shape_id, Trip.service_id, Frequency.start_secs,
-                   Frequency.end_secs, Frequency.headway_secs)
+        self.windows_by_trip: dict[str, list[Window]] = defaultdict(list)
+        for trip_id, route_id, shape_id, service_id, start, end, headway in conn.execute(
+            select(Trip.trip_id, Trip.route_id, Trip.shape_id, Trip.service_id,
+                   Frequency.start_secs, Frequency.end_secs, Frequency.headway_secs)
             .join(Trip, Trip.trip_id == Frequency.trip_id)
         ):  # fmt: skip
             w = Window(start, end, headway)
             self.windows_by_shape[(shape_id, service_id)].append(w)
             self.windows_by_route[(route_id, service_id)].append(w)
+            self.windows_by_trip[trip_id].append(w)
+
+        # For the API: which trip templates stop where (a loop can list a stop twice).
+        self.trip_info = {
+            t.trip_id: t for t in conn.execute(select(Trip.trip_id, Trip.route_id, Trip.shape_id,
+                                                      Trip.service_id, Trip.trip_headsign))
+        }  # fmt: skip
+        self.trips_at_stop: dict[str, list[tuple[str, StopPoint]]] = defaultdict(list)
+        for trip_id, stops in self.stops_by_trip.items():
+            for stop in stops:
+                self.trips_at_stop[stop.stop_id].append((trip_id, stop))
 
         self.calendar = conn.execute(select(Calendar)).mappings().all()
 
