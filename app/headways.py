@@ -29,7 +29,7 @@ import math
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from itertools import pairwise
 from zoneinfo import ZoneInfo
 
@@ -204,11 +204,14 @@ ON_TIME_LATE_SECS = 300  # ... and <= 5 min late
 DEPARTURE_SEEN_WINDOW = (-60, 180)  # first fix this close to start_time = departure seen
 
 
+def service_midnight(service_date: date) -> datetime:
+    return datetime.combine(service_date, datetime.min.time(), KL)
+
+
 def service_day_secs(t: datetime, service_date: date) -> float:
     """Seconds since midnight (KL) at the start of the service day. A bus at 00:20 on
     the next calendar day, still running the previous day's service, gives 87,600."""
-    midnight = datetime.combine(service_date, datetime.min.time(), KL)
-    return (t - midnight).total_seconds()
+    return (t - service_midnight(service_date)).total_seconds()
 
 
 def departure_seen(first_fix: datetime, service_date: date, start_secs: int | None) -> bool:
@@ -227,6 +230,49 @@ def delay_secs(arrived_at: datetime, service_date: date, start_secs: int, offset
 
 def is_on_time(delay: int) -> bool:
     return -ON_TIME_EARLY_SECS <= delay <= ON_TIME_LATE_SECS
+
+
+@dataclass(frozen=True)
+class LiveEstimate:
+    target: StopPoint  # the next visit to the stop we were asked about
+    current_delay_secs: int | None  # at the last stop passed; None if unknown
+    eta: datetime | None  # None if the departure wasn't seen (start_time untrustworthy)
+
+
+def live_estimate(
+    fixes: list[Fix],
+    stops: list[StopPoint],
+    stop_id: str,
+    service_date: date | None,
+    start_secs: int | None,
+) -> LiveEstimate | None:
+    """Where a live bus is relative to `stop_id`, or None if it has already passed it.
+
+    ETA = actual departure + timetable travel time to the stop + the delay it's running
+    at its last stop passed (assumes it neither recovers nor loses more time)."""
+    arrivals = detect_arrivals(fixes, stops)
+    passed = max((a.sequence for a in arrivals), default=-1)
+    target = next((s for s in stops if s.stop_id == stop_id and s.sequence > passed), None)
+    if target is None:
+        return None
+    seen = (
+        bool(fixes)
+        and service_date is not None
+        and departure_seen(fixes[0].t, service_date, start_secs)
+    )
+    if not seen:
+        return LiveEstimate(target, None, None)
+    offsets = {s.sequence: s.offset_secs for s in stops}
+    judged = [a for a in arrivals if offsets[a.sequence] > 0]  # first stop = departure itself
+    current = (
+        delay_secs(judged[-1].t, service_date, start_secs, offsets[judged[-1].sequence])
+        if judged
+        else None
+    )
+    eta = service_midnight(service_date) + timedelta(
+        seconds=start_secs + target.offset_secs + (current or 0)
+    )
+    return LiveEstimate(target, current, eta)
 
 
 # ---------- coverage ----------

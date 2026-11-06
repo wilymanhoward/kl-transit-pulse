@@ -1,8 +1,10 @@
 # KL Transit Pulse
 
+[![CI](https://github.com/wilymanhoward/kl-transit-pulse/actions/workflows/ci.yml/badge.svg)](https://github.com/wilymanhoward/kl-transit-pulse/actions/workflows/ci.yml)
+
 Measures how reliable Kuala Lumpur's Rapid KL buses really are, using live GPS positions and the published timetable from Malaysia's open data portal.
 
-> Status: Phase 4 (API). See [docs/DATA_FINDINGS.md](docs/DATA_FINDINGS.md) for what the real data looks like.
+> Status: Phase 5 (CI and deployment). See [docs/DATA_FINDINGS.md](docs/DATA_FINDINGS.md) for what the real data looks like.
 
 Rapid KL bus timetables are frequency-based ("every 15 min"), not fixed times, and the live feed only carries about a third of scheduled buses. So the main measure is **delay per bus against its own departure**: the feed reports when each run actually left, and the timetable gives the travel time to every stop. Gaps between buses (headways) are reported only for route-hours where the feed shows at least 80% of scheduled runs. Every figure is an **estimate from GPS** and comes with its sample size and coverage.
 
@@ -86,12 +88,18 @@ Performance notes and the EXPLAIN ANALYZE comparison: [docs/PERFORMANCE.md](docs
 Tests (DB tests need the compose database and are skipped without `TEST_DATABASE_URL`):
 
 ```bash
-TEST_DATABASE_URL=postgresql+psycopg://transit:transit@localhost:5432/transit_test uv run pytest
+TEST_DATABASE_URL=postgresql+psycopg://transit:transit@127.0.0.1:5432/transit_test uv run pytest
 ```
 
-On Windows PowerShell, set the variable first: `$env:TEST_DATABASE_URL="postgresql+psycopg://transit:transit@localhost:5432/transit_test"`, then `uv run pytest`.
+On Windows PowerShell, set the variable first: `$env:TEST_DATABASE_URL="postgresql+psycopg://transit:transit@127.0.0.1:5432/transit_test"`, then `uv run pytest`.
 
 Lint: `uv run ruff check . && uv run ruff format --check .`
+
+Coverage (CI fails below 80%; currently ~95%): `uv run pytest --cov`
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on every push and pull request: ruff lint and format check, the full test suite against a real Postgres 16 service with coverage, and a Docker image build with a smoke test. In CI, database tests fail instead of skipping if the database is missing.
+
+Deploying to a server: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 Data reconnaissance scripts: `uv run python scripts/fetch_samples.py` then `uv run python scripts/inspect_samples.py`.
 

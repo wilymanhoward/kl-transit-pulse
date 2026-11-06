@@ -8,14 +8,7 @@ from sqlalchemy import Engine, func, select, text
 from sqlalchemy.orm import Session
 
 from app.estimate import Timetable, day_start, parse_trip_id
-from app.headways import (
-    KL,
-    Fix,
-    Window,
-    delay_secs,
-    departure_seen,
-    detect_arrivals,
-)
+from app.headways import KL, Fix, Window, live_estimate
 from app.models import IngestionRun, Route, RouteStatsHourly, Stop, VehiclePosition
 from app.schemas import (
     Coverage,
@@ -246,31 +239,11 @@ def live_at_stop(
 
     out = []
     for key, (row, stops) in candidates.items():
-        run_fixes = fixes[key]
-        arrivals = detect_arrivals(run_fixes, stops)
-        passed = max((a.sequence for a in arrivals), default=-1)
-        target = next((s for s in stops if s.stop_id == stop_id and s.sequence > passed), None)
-        if target is None:
+        est = live_estimate(fixes[key], stops, stop_id, row.trip_start_date, row.trip_start_secs)
+        if est is None:
             continue  # already passed (its last visit to) this stop
         service_date, start_secs = row.trip_start_date, row.trip_start_secs
-        seen = (
-            bool(run_fixes)
-            and service_date is not None
-            and departure_seen(run_fixes[0].t, service_date, start_secs)
-        )
-        offsets = {s.sequence: s.offset_secs for s in stops}
-        current = None
-        if seen:
-            judged = [a for a in arrivals if offsets[a.sequence] > 0]
-            if judged:
-                last = judged[-1]
-                current = delay_secs(last.t, service_date, start_secs, offsets[last.sequence])
-        eta = (
-            day_start(service_date)
-            + timedelta(seconds=start_secs + target.offset_secs + (current or 0))
-            if seen
-            else None
-        )
+        eta = est.eta
         route_id = row.route_id or row.trip_id.split("_")[1]
         out.append(
             LiveBus(
@@ -282,7 +255,7 @@ def live_at_stop(
                 if service_date and start_secs is not None
                 else None,
                 last_seen_at=row.observed_at,
-                current_delay_secs=current,
+                current_delay_secs=est.current_delay_secs,
                 estimated_arrival=eta,
                 minutes_away=round(max(0.0, (eta - now).total_seconds() / 60), 1) if eta else None,
             )

@@ -101,3 +101,24 @@
 
 3. *How does "next bus" work when the timetable has no fixed times?*
    Two lists. *Live*: buses the feed shows right now, placed on their route by the same stop-matching code as the estimator. Their ETA is when they left, plus the timetable's travel time, plus how late they're running. *Scheduled*: the "every N minutes" grid, clearly marked approximate, with the median delay we've measured at that stop for that hour and the sample size. I don't pretend the grid is a precise timetable.
+
+## Phase 5: CI and deployment
+
+**What it is, in plain English.** Every push to GitHub automatically runs the linter, runs all the tests against a real PostgreSQL database and measures coverage, and builds the Docker image. If any of those fail, the change is marked red. Deployment is the same `docker compose up` on a Linux server. Migrations run automatically first, and nothing starts if they fail.
+
+**Key concepts.**
+- **CI (continuous integration)**: an automated check on every change, so broken code is caught before it's merged.
+- **Service container**: CI starts a throwaway Postgres next to the tests, so the tests use the real database engine.
+- **Coverage**: which lines the tests executed. Useful for finding untested logic, misleading as a target on its own.
+- **Least exposure**: bind internal services to localhost and put one HTTPS entry point in front.
+
+**Likely questions.**
+
+1. *Your coverage is 95%. Does that mean the code is correct?*
+   No. It means 95% of lines ran during tests. What I care about is whether the risky logic is tested with meaningful cases: the stop matching has loop, jitter, missed-stop and past-midnight tests, and the API has bad-input tests. I used coverage to find a real gap, the live-bus delay estimate, and fixed it by extracting a pure function. I left a once-a-day download function untested on purpose rather than writing a hollow test.
+
+2. *How do you stop CI from passing when the database tests didn't actually run?*
+   Locally, the DB tests skip if there's no test database, which is convenient. In CI I set `REQUIRE_TEST_DB=1`, which turns that skip into a failure. I checked it: without the database URL, the 24 DB tests error instead of skipping.
+
+3. *What did you find when preparing to deploy?*
+   That my Compose file published Postgres on every network interface with a default password. Harmless on my laptop, a real hole on a public VM. I bound Postgres and the API to localhost, documented putting Caddy (HTTPS) in front, and said in the guide to never open port 5432. I also found that Oracle's free VMs get reclaimed if they look idle, which a low-CPU collector does, so the guide recommends converting to Pay As You Go, with a budget alert.

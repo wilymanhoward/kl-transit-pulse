@@ -166,3 +166,23 @@ The timetable (~1-2 s to build) is cached per process and rebuilt only when a ne
 **Index `stop_arrivals(stop_id, service_date)`**, measured 35.4 → 3.8 ms on a 606k-row table (see PERFORMANCE.md). No new index for `live`: it reads `vehicle_positions` by `observed_at` and `(vehicle_id, observed_at)`, both already indexed.
 
 **Thin endpoints.** `app/api.py` validates and shapes responses, `app/queries.py` reads the database, and `app/schemas.py` defines the response models (and the OpenAPI docs). Each part can be tested and explained on its own.
+
+## Phase 5
+
+**GitHub Actions with three parallel jobs: lint, test, docker.**
+- `test` runs against a real `postgres:16` service container, not SQLite, because the code relies on Postgres features (`DISTINCT ON`, `percentile_cont`, `NULLS NOT DISTINCT`, partial indexes).
+- `REQUIRE_TEST_DB=1` makes database tests fail, not skip, if the database is missing, so CI can't pass with half the suite quietly skipped.
+- Coverage threshold (80%) is in `pyproject.toml`, so local runs and CI agree. It currently measures ~95%.
+- `docker` builds the image and smoke-tests it (imports every module, lists migrations).
+- Same uv version as the Dockerfile; `uv sync --frozen` fails if `uv.lock` is out of date. `concurrency` cancels superseded runs, and `permissions: contents: read` is least privilege.
+Rejected: pushing images to a registry (no deploy target yet), and a matrix of Python versions (we ship one image with 3.12).
+
+**Coverage work went into real gaps, not the number.** The live-bus current-delay/ETA logic was untested inside a DB-heavy function, so it was pulled out as a pure function (`headways.live_estimate`) and tested directly. The JSON log formatter got tests (it's a claimed feature). Left untested on purpose: `gtfs_static.download()` (a once-a-day call with a 60 s sleep on 429) and the `main()` entry points.
+
+**Postgres and the API bind to `127.0.0.1` by default.** Found while writing the deploy guide: Compose was publishing Postgres on all interfaces with the default password. Fine on a laptop, dangerous on a VM. Local use is unchanged. On a server the API goes behind an HTTPS reverse proxy (Caddy).
+
+**Deploy = the same Docker Compose stack on one Linux VM.** The one-shot `migrate` service already runs migrations on every `up`, and the worker and API wait for it to succeed.
+Recommended host: Oracle Cloud Always Free (ARM, €0), converted to Pay As You Go to avoid idle-instance reclaim, with a budget alert. Alternative: a ~€5/month VPS.
+Rejected: Render free (spins down, no free worker, Postgres expires). **Not set up: needs Howard's decision and card.**
+
+**Database URLs use `127.0.0.1`, not `localhost`.** Found right after binding Postgres to IPv4 loopback only: on Windows, `localhost` resolves to IPv6 `::1` first, and connecting there *hung* (a single DB test went from 0.9 s to a 120 s timeout) instead of falling back to IPv4. Measured both ways before changing every URL.

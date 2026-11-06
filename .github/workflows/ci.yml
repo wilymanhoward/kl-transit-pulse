@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# A newer push to the same branch cancels the run still going for the old one.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.1" # same uv as the Dockerfile
+          python-version: "3.12"
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: transit
+          POSTGRES_PASSWORD: transit
+          POSTGRES_DB: transit_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U transit -d transit_test"
+          --health-interval 2s --health-timeout 3s --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://transit:transit@127.0.0.1:5432/transit_test
+      REQUIRE_TEST_DB: "1" # DB tests must run here, never silently skip
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.1"
+          python-version: "3.12"
+      - run: uv sync --frozen
+      # Coverage threshold (80%) lives in pyproject.toml; below it, this step fails.
+      - run: uv run pytest --cov --cov-report=term --cov-report=xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-xml
+          path: coverage.xml
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t kl-transit-pulse:${{ github.sha }} .
+      - name: Smoke test (imports, migrations listed)
+        run: |
+          docker run --rm kl-transit-pulse:${{ github.sha }} \
+            sh -c "python -c 'import app.api, app.worker, app.estimate' && alembic history | head -3"

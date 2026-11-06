@@ -37,6 +37,9 @@ def engine(monkeypatch: pytest.MonkeyPatch):
     tested too). Skips the test if TEST_DATABASE_URL isn't set."""
     url = os.getenv("TEST_DATABASE_URL")
     if not url:
+        # In CI a missing database must fail loudly, not quietly skip half the suite.
+        if os.getenv("REQUIRE_TEST_DB"):
+            pytest.fail("REQUIRE_TEST_DB is set but TEST_DATABASE_URL is not")
         pytest.skip("TEST_DATABASE_URL not set")
     monkeypatch.setenv("DATABASE_URL", url)
     cfg = Config(str(ROOT / "alembic.ini"))

@@ -22,6 +22,7 @@ from app.headways import (
     distance_m,
     is_on_time,
     is_regular,
+    live_estimate,
     scheduled_headway,
     service_day_secs,
 )
@@ -293,3 +294,38 @@ def test_departures_per_hour() -> None:
     windows = [Window(6 * 3600, 7 * 3600, 1200), Window(23 * 3600 + 1800, 25 * 3600, 1800)]
     # 06:00, 06:20, 06:40 | 23:30 | 24:00, 24:30 (end is exclusive: no 25:00 departure)
     assert departures_per_hour(windows) == {6: 3, 23: 1, 24: 2}
+
+
+# ---------- live bus estimate ----------
+
+# Same straight road; now each stop has a timetable offset (scheduled travel time).
+TIMED = [StopPoint(i + 1, f"S{i + 1}", *east(i * 300), offset_secs=i * 60) for i in range(5)]
+START = 36000  # departed 10:00 KL (= T0)
+
+
+def test_live_estimate_uses_delay_at_last_stop_passed() -> None:
+    # Timetable: 300 m per 60 s (5 m/s). The bus does 4 m/s, so it falls behind:
+    # S2 at 80 s (due 60), S3 at 155 s (due 120), S4 at 230 s (due 180).
+    fixes = [fix(t, 4 * t - 20) for t in range(0, 241, 30)]  # last fix: 240 s, 940 m
+    est = live_estimate(fixes, TIMED, "S5", DAY, START)
+    assert est.target.stop_id == "S5"
+    assert est.current_delay_secs == pytest.approx(50, abs=3)  # at S4, the last stop passed
+    # ETA at S5 = departure + 240 s timetabled + the 50 s it's running late.
+    assert (est.eta - T0).total_seconds() == pytest.approx(290, abs=3)
+
+
+def test_live_estimate_only_first_stop_passed_has_no_delay_yet() -> None:
+    est = live_estimate([fix(0, -10), fix(20, 100)], TIMED, "S3", DAY, START)
+    assert est.current_delay_secs is None
+    assert (est.eta - T0).total_seconds() == 120  # on schedule until we know better
+
+
+def test_live_estimate_departure_not_seen_gives_no_eta() -> None:
+    late = [fix(3600, 250), fix(3630, 400)]  # first seen an hour after start_time
+    est = live_estimate(late, TIMED, "S4", DAY, START)
+    assert est.target.stop_id == "S4"
+    assert est.current_delay_secs is None and est.eta is None
+
+
+def test_live_estimate_bus_already_past_stop() -> None:
+    assert live_estimate([fix(0, -10), fix(30, 290), fix(60, 650)], TIMED, "S2", DAY, START) is None

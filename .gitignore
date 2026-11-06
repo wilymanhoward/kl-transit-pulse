@@ -9,3 +9,4 @@ htmlcov/
 # Live samples are large and re-downloadable; small test fixtures live in tests/fixtures/
 data/samples/*
 !data/samples/.gitkeep
+coverage.xml

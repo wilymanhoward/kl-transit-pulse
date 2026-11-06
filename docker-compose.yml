@@ -6,7 +6,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-transit}
       POSTGRES_DB: ${POSTGRES_DB:-transit}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      # Bound to localhost only: never expose Postgres on a public server.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       # Runs only when the volume is first created: makes the transit_test database.
@@ -49,7 +50,9 @@ services:
       migrate:
         condition: service_completed_successfully
     ports:
-      - "${API_PORT:-8000}:8000"
+      # Localhost by default; on a server put a reverse proxy (HTTPS) in front, or set
+      # API_BIND=0.0.0.0 deliberately. See docs/DEPLOYMENT.md.
+      - "${API_BIND:-127.0.0.1}:${API_PORT:-8000}:8000"
     restart: unless-stopped
     command: ["uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8000"]
 
