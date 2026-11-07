@@ -18,19 +18,21 @@
 
 **Rejected: Render free tier.** Free web services spin down after 15 min without traffic, background workers reportedly have no free type (from ~$7/month), and free Postgres reportedly expires after 30 days. Any of these breaks a 24/7 collector.
 
-**Recommendation:** **A (Oracle Always Free) with the account converted to Pay As You Go**, plus a budget alert set to a few dollars. It's the only option that is genuinely €0 and always on, and 2 OCPU / 12 GB is far more than this needs. If you don't want a card on a pay-as-you-go cloud account, use **B**: about €5/month buys something simple and predictable. **Neither has been set up. Both involve a payment card, so this is your decision.**
+**Recommendation:** **A (Oracle Always Free)**. *(First version said: convert to Pay As You Go with a budget alert. Revised: stay on the Free Tier and use a small 1 OCPU / 2 GB shape so memory use keeps the VM above the idle threshold; see the next section.)* It's the only option that is genuinely €0 and always on, and 2 OCPU / 12 GB is far more than this needs. If you don't want a card on a pay-as-you-go cloud account, use **B**: about €5/month buys something simple and predictable. **Neither has been set up. Both involve a payment card, so this is your decision.**
 
 Sources: [InfoQ on the 2026 A1 limit cut](https://infoq.com/news/2026/07/oracle-cloud-free-tier-limits/), [Oracle Always Free resources (official)](https://docs.oracle.com/en-us/iaas/Content/FreeTier/resourceref.htm), [OCI reclamation rules summary](https://oracommit.blogspot.com/2026/02/understanding-oci-always-free-compute.html), [Render pricing 2026](https://temps.sh/blog/render-pricing-2026), [Hetzner price adjustment (official)](https://docs.hetzner.com/general/infrastructure-and-availability/price-adjustment/), [Hetzner plans and availability 2026](https://www.bitdoze.com/hetzner-cloud-cost-optimized-plans).
 
 ## Chosen: Oracle Cloud Always Free, step by step
 
-Decision (Howard, 2026-11-06): option A. Steps 1-4 need you; nobody else should enter your card or create your account. Step 5 is one command.
+Decision (Howard, 2026-11-06): option A. **Revised 2026-11-07: stay on the Free Tier, no Pay As You Go upgrade**, so the card can never be charged. A Free Tier account is limited to Always Free resources after the trial; the card only verifies identity.
 
-1. **Sign up** at <https://www.oracle.com/cloud/free/>. Pick **Singapore** as the *home region*: it's the closest to the data source, and **the home region can't be changed later**. A card is required for identity verification.
-2. **Upgrade to Pay As You Go** (Billing & Cost Management → *Upgrade and Manage Payment*). Always Free resources stay free. This is what stops Oracle reclaiming the VM as "idle" (see above).
-3. **Set a budget alert** so a mistake can't surprise you: Billing & Cost Management → *Budgets* → *Create Budget*, monthly amount **USD 1**, alert when *actual* spend reaches **50%**, sent to your email.
+**Handling the idle rule for free instead:** a VM is "idle" only if CPU, network **and** memory are *all* below ~20% for 7 days. The stack measured **~270 MB** (db 87, API 64, worker 121 MiB, `docker stats`), plus Ubuntu's ~300-400 MB, so ~650 MB total. On a **1 OCPU / 2 GB** VM that's ~30% memory, above the threshold. On 2 OCPU / 12 GB it would be ~5% and look idle. So use the smaller shape. *Not guaranteed:* Oracle hasn't published exactly how it measures memory. Check the instance's memory metric in the console after a week. If the VM is ever stopped as idle, the disk and data stay; start it again from the console.
+
+1. **Sign up** at <https://www.oracle.com/cloud/free/>. Pick **Singapore** as the *home region*: it's the closest to the data source, and **the home region can't be changed later**. A card is required for identity verification. *(Done.)*
+2. ~~Upgrade to Pay As You Go~~: **skipped on purpose** (see above).
+3. ~~Budget alert~~: not needed. A Free Tier account can't incur charges.
 4. **Create the VM**: Compute → *Instances* → *Create instance*:
-   - **Image:** Canonical Ubuntu 24.04. **Shape:** *Ampere* → `VM.Standard.A1.Flex` with **2 OCPU, 12 GB**. Check it says "Always Free-eligible".
+   - **Image:** Canonical Ubuntu 24.04. **Shape:** *Ampere* → `VM.Standard.A1.Flex` with **1 OCPU, 2 GB**. Check it says "Always Free-eligible".
    - **Networking:** the default new VCN, *assign a public IPv4 address*.
    - **SSH key:** *Paste public keys*, with the contents of `~/.ssh/oracle_kl_transit.pub` (created on your PC for this, one line starting `ssh-ed25519`).
    - **Boot volume:** default (~47 GB; Always Free includes up to 200 GB).
